@@ -1,0 +1,111 @@
+# pocket-portal Helm chart. The portal is stateless, so it scales by
+# replica count; everything that must survive is in Postgres and PocketID.
+
+image:
+  repository: ghcr.io/fb-univ/pocket-portal
+  # Defaults to v<appVersion>. Pin a release rather than a moving tag.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# More than one is safe: sessions are signed cookies, and every replica
+# shares AUTH_SECRET from the same Secret.
+replicaCount: 2
+
+# Non-secret settings, rendered into the portal's YAML config file
+# (CONFIG_FILE) and mounted from a ConfigMap. Same keys as
+# pocket-portal.example.yaml; the portal refuses unknown keys at startup.
+# pocketid.baseUrl and pocketid.oidcClientId are required.
+config:
+  pocketid:
+    baseUrl: ""
+    oidcClientId: ""
+  auth:
+    # The portal's public origin, e.g. https://portal.example.test. Strongly
+    # recommended: it pins OIDC redirects instead of trusting the Host header.
+    url: ""
+  log:
+    level: info
+  # smtp:
+  #   host: smtp.example.test
+  #   from: portal@example.test
+  # features:
+  #   accessRequests: true
+
+# Secrets, passed to the portal as environment variables. Either name an
+# existing Secret whose keys are the variable names below, or set the values
+# here and the chart creates one.
+secrets:
+  existingSecret: ""
+  # Required unless existingSecret is set.
+  pocketidApiKey: ""
+  pocketidOidcClientSecret: ""
+  # Signs session cookies; e.g. `openssl rand -base64 32`. Changing it signs
+  # everyone out.
+  authSecret: ""
+  # Only when postgresql.enabled is false.
+  databaseUrl: ""
+  # Optional.
+  metricsToken: ""
+  smtpPassword: ""
+
+# A single-instance Postgres for trying the chart out. For production, point
+# secrets.databaseUrl at a managed or separately operated database, with
+# backups, and set enabled: false.
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "18"
+  auth:
+    username: portal
+    database: pocket_portal
+    # Required when enabled, unless secrets.existingSecret holds
+    # POSTGRES_PASSWORD (and DATABASE_URL).
+    password: ""
+  persistence:
+    size: 1Gi
+    # Empty uses the cluster's default StorageClass.
+    storageClass: ""
+  # e.g. requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 512Mi }
+  resources: {}
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  # Name of a TLS Secret for host; leave empty for no TLS block.
+  tlsSecretName: ""
+
+# Keeps a replica serving through voluntary disruptions (node drains).
+# Rendered only while replicaCount > 1.
+podDisruptionBudget:
+  minAvailable: 1
+
+# Set requests at least, or the pods run BestEffort and are evicted first.
+# A starting point: requests: { cpu: 100m, memory: 256Mi },
+# limits: { memory: 512Mi }.
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+
+# Optional NetworkPolicies. Off by default, since they need a CNI that
+# enforces them. When on, the bundled Postgres accepts connections only from
+# the portal's pods. The portal accepts traffic on its port from
+# `portalIngressFrom` (NetworkPolicy peers, e.g. your ingress controller's
+# namespace), or from anywhere while that's empty. Egress stays open: the
+# portal must reach PocketID, SMTP and DNS.
+networkPolicy:
+  enabled: false
+  portalIngressFrom: []
+  # - namespaceSelector:
+  #     matchLabels:
+  #       kubernetes.io/metadata.name: ingress-nginx

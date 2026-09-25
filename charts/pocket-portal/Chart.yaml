@@ -1,0 +1,13 @@
+apiVersion: v2
+name: pocket-portal
+description: A self-hosted portal for PocketID users to reach their apps and request access to the rest.
+type: application
+# The chart's own version, bumped when the chart changes.
+version: 0.1.0
+# The portal release it deploys by default (image tag v<appVersion>).
+# Bumped after each portal release.
+appVersion: "0.11.0"
+home: https://github.com/FB-UNIV/pocket-portal
+sources:
+  - https://github.com/FB-UNIV/pocket-portal
+  - https://github.com/FB-UNIV/pocket-portal-helm

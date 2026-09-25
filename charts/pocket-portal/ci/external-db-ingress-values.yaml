@@ -1,0 +1,19 @@
+# Used by CI: external database via an existing Secret, ingress with TLS.
+replicaCount: 3
+config:
+  pocketid:
+    baseUrl: https://id.example.test
+    oidcClientId: 00000000-0000-4000-8000-000000000000
+  auth:
+    url: https://portal.example.test
+  features:
+    accessRequests: false
+secrets:
+  existingSecret: pocket-portal-secrets
+postgresql:
+  enabled: false
+ingress:
+  enabled: true
+  className: nginx
+  host: portal.example.test
+  tlsSecretName: portal-tls

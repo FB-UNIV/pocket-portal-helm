@@ -1,0 +1,13 @@
+{{- $_ := required "config.pocketid.baseUrl is required" .Values.config.pocketid.baseUrl }}
+{{- $_ := required "config.pocketid.oidcClientId is required" .Values.config.pocketid.oidcClientId }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "pocket-portal.fullname" . }}
+  labels:
+    {{- include "pocket-portal.labels" . | nindent 4 }}
+data:
+  # The portal's config file (CONFIG_FILE). Secrets never go here; the
+  # portal refuses them, and unknown keys, at startup.
+  config.yaml: |
+    {{- toYaml .Values.config | nindent 4 }}

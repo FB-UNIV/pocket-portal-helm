@@ -1,0 +1,45 @@
+name: Release chart
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One release at a time.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      # The tag names the chart version being published: refuse a mismatch
+      # rather than publish a version the tag doesn't describe.
+      - name: Check the tag matches the chart version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(helm show chart charts/pocket-portal | sed -n 's/^version: //p')
+          if [ "$TAG_NAME" != "v$version" ]; then
+            echo "::error::tag $TAG_NAME doesn't match the chart version $version"
+            exit 1
+          fi
+
+      - name: Package and push to ghcr.io/fb-univ/charts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GH_TOKEN" | helm registry login ghcr.io -u "$ACTOR" --password-stdin
+          helm package charts/pocket-portal -d dist
+          helm push dist/*.tgz oci://ghcr.io/fb-univ/charts

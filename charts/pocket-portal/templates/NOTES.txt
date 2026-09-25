@@ -1,0 +1,17 @@
+pocket-portal {{ .Chart.AppVersion }} is deploying as "{{ include "pocket-portal.fullname" . }}".
+
+Pods become Ready once both Postgres and PocketID answer; check with:
+  kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl logs deploy/{{ include "pocket-portal.fullname" . }} | grep Configuration
+
+Every configuration problem is logged at startup as "Configuration: ...".
+{{- if .Values.postgresql.enabled }}
+
+The bundled Postgres is for trying the chart out: it has no backups. For
+production, run the database separately and set postgresql.enabled=false.
+{{- end }}
+{{- if not .Values.config.auth.url }}
+
+config.auth.url is empty: OIDC redirects follow the incoming Host header.
+Set it to the portal's public URL.
+{{- end }}

@@ -1,0 +1,122 @@
+name: Chart CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Also daily: the chart deploys the portal's main, which moves on its own.
+  schedule:
+    - cron: "17 5 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CHART: charts/pocket-portal
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      - name: Install kubeconform (checksum-verified)
+        env:
+          KUBECONFORM_VERSION: v0.8.0
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="kubeconform-linux-amd64.tar.gz"
+          gh release download "$KUBECONFORM_VERSION" -R yannh/kubeconform \
+            -p "$asset" -p CHECKSUMS -D "$RUNNER_TEMP/kubeconform"
+          cd "$RUNNER_TEMP/kubeconform"
+          grep " $asset\$" CHECKSUMS | sha256sum -c -
+          tar xzf "$asset" kubeconform
+          sudo install kubeconform /usr/local/bin/
+
+      - name: Lint and validate every CI values file
+        run: |
+          for values in "$CHART"/ci/*-values.yaml; do
+            echo "::group::$values"
+            helm lint "$CHART" -f "$values" --strict
+            helm template ci "$CHART" -f "$values" \
+              | kubeconform -strict -summary -kubernetes-version 1.34.0
+            echo "::endgroup::"
+          done
+
+  # Installs the chart on kind with an image built from the portal's main,
+  # so a portal change that breaks the chart shows up here.
+  kind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: FB-UNIV/pocket-portal
+          path: portal
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Build the portal image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: portal
+          push: false
+          load: true
+          tags: ghcr.io/fb-univ/pocket-portal:cismoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: portal
+
+      - name: Install the chart
+        run: |
+          kind load docker-image ghcr.io/fb-univ/pocket-portal:cismoke --name portal
+          helm install qw "$CHART" \
+            -f "$CHART/ci/bundled-postgres-values.yaml" \
+            --set image.tag=cismoke --set image.pullPolicy=Never
+
+      # PocketID is deliberately unreachable, so pods are live but never Ready.
+      - name: Wait for Postgres, then for the portal to be running
+        run: |
+          kubectl rollout status statefulset/qw-pocket-portal-postgresql --timeout=180s
+          kubectl wait pod -l app.kubernetes.io/component=portal \
+            --for=jsonpath='{.status.containerStatuses[0].started}'=true --timeout=240s
+
+      - name: Liveness 200, readiness 503 with the database up and PocketID down
+        run: |
+          kubectl port-forward deploy/qw-pocket-portal 3000:3000 >/tmp/pf.log 2>&1 &
+          for _ in $(seq 1 30); do curl -fs http://127.0.0.1:3000/api/health >/dev/null && break; sleep 1; done
+          code=$(curl -s -o /tmp/health.json -w '%{http_code}' http://127.0.0.1:3000/api/health)
+          cat /tmp/health.json; echo
+          test "$code" = "200"
+          code=$(curl -s -o /tmp/ready.json -w '%{http_code}' http://127.0.0.1:3000/api/ready)
+          cat /tmp/ready.json; echo
+          test "$code" = "503"
+          grep -q '"database":{"ok":true}' /tmp/ready.json
+          grep -q '"pocketid":{"ok":false' /tmp/ready.json
+
+      # The config file supplies POCKETID_BASE_URL, and the portal refuses
+      # unknown config keys at startup: both would show in these logs.
+      - name: Migrations ran in the init container, and the config file was accepted
+        run: |
+          pod=$(kubectl get pod -l app.kubernetes.io/component=portal -o name | head -1)
+          kubectl logs "$pod" -c migrate | grep -q "migrations up to date"
+          ! kubectl logs "$pod" -c portal | grep -qE "POCKETID_BASE_URL is not set|Unknown key"
+
+      - name: Cluster state
+        if: failure()
+        run: |
+          kubectl get all
+          kubectl describe pods
+          kubectl logs -l app.kubernetes.io/instance=qw --all-containers --prefix --tail=100

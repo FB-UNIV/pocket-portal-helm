@@ -1,0 +1,17 @@
+# Used by CI: bundled Postgres, an unreachable PocketID.
+config:
+  pocketid:
+    baseUrl: http://127.0.0.1:1
+    oidcClientId: ci-dummy
+secrets:
+  pocketidApiKey: ci-dummy
+  pocketidOidcClientSecret: ci-dummy
+  authSecret: ci-smoke-secret-0000000000000000
+postgresql:
+  auth:
+    password: cismokepassword
+# NetworkPolicies on, so CI renders and installs them. The smoke test passes
+# either way: the portal's pods (and their migrate init container) may reach
+# Postgres, and kubectl port-forward enters the pod directly.
+networkPolicy:
+  enabled: true
