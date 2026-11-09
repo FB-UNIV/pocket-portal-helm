@@ -1,7 +1,8 @@
 # pocket-portal Helm chart
 
 Deploys the portal, and optionally a single Postgres for trying it out.
-PocketID is not included: point `config.pocketid.baseUrl` at your own.
+PocketID is not included: point `config.pocketid.baseUrl` at your own,
+running **PocketID 2.15.0 or later**.
 
 ```bash
 helm install portal oci://ghcr.io/fb-univ/charts/pocket-portal --version <chart version> -f my-values.yaml
